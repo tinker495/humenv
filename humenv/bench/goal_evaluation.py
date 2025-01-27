@@ -32,7 +32,7 @@ class GoalEvaluation:
     def run(self, agent: Any) -> Dict[str, Any]:
         metrics = {}
         self.env_kwargs["task"] = None
-        penv, manager = make_humenv(
+        penv, mp_info = make_humenv(
             num_envs=self.num_envs,
             vectorization_mode=self.vectorization_mode,
             motions=self.motions,
@@ -64,6 +64,6 @@ class GoalEvaluation:
             local_stats = convert_dict_of_lists(local_stats)
             metrics[goal_name] = local_stats
         penv.close()
-        if manager is not None:
-            manager.shutdown()
+        if mp_info is not None:
+            mp_info["manager"].shutdown()
         return metrics

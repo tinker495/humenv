@@ -5,6 +5,7 @@
 
 from collections import defaultdict
 import torch
+import numpy as np
 import ot
 
 
@@ -82,6 +83,17 @@ def emd(next_obs: torch.Tensor, tracking_target: torch.Tensor, device: str = "cp
     Y_pot = torch.ones(tracked_obs.shape[0], device=agent_obs.device) / tracked_obs.shape[0]
     transport_cost = ot.emd2(X_pot, Y_pot, cost_matrix, numItermax=100000)
     return {"emd": transport_cost.item()}
+
+def emd_numpy(next_obs: torch.Tensor, tracking_target: torch.Tensor):
+    # keep only pose part of the observations
+    agent_obs = get_pose(next_obs).to("cpu")
+    tracked_obs = get_pose(tracking_target).to("cpu")
+    # compute optimal transport cost
+    cost_matrix = distance_matrix(agent_obs, tracked_obs).cpu().detach().numpy()
+    X_pot = np.ones(agent_obs.shape[0]) / agent_obs.shape[0]
+    Y_pot = np.ones(tracked_obs.shape[0]) / tracked_obs.shape[0]
+    transport_cost = ot.emd2(X_pot, Y_pot, cost_matrix, numItermax=100000)
+    return {"emd": transport_cost}
 
 
 ROOT_H_OBS = 1

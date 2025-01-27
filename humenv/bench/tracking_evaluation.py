@@ -5,23 +5,29 @@
 
 from typing import Any, Dict, List, Sequence, Callable
 import dataclasses
+import multiprocessing
 import gymnasium
 import numpy as np
-from gymnasium.vector.utils import CloudpickleWrapper
 import functools
 import torch
 from humenv.misc.motionlib import MotionBuffer
-from humenv.bench.utils.metrics import distance_proximity, emd, phc_metrics
+from humenv.bench.utils.metrics import distance_proximity, emd, phc_metrics, emd_numpy
 from humenv.bench.gym_utils.episodes import Episode
 from humenv import make_humenv, CustomManager
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 from packaging.version import Version
 from tqdm import tqdm
+import os
+
 
 if Version("0.26") <= Version(gymnasium.__version__) < Version("1.0"):
-    cast_obs_wrapper = lambda env: gymnasium.wrappers.TransformObservation(env, lambda obs: obs.astype(np.float32))
+
+    def cast_obs_wrapper(env) -> gymnasium.Wrapper:
+        return gymnasium.wrappers.TransformObservation(env, lambda obs: obs.astype(np.float32))
 else:
-    cast_obs_wrapper = lambda env: gymnasium.wrappers.TransformObservation(env, lambda obs: obs.astype(np.float32), env.observation_space)
+
+    def cast_obs_wrapper(env) -> gymnasium.Wrapper:
+        return gymnasium.wrappers.TransformObservation(env, lambda obs: obs.astype(np.float32), env.observation_space)
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -34,6 +40,7 @@ class TrackingEvaluation:
         default_factory=lambda: [gymnasium.wrappers.FlattenObservation, cast_obs_wrapper]
     )
     env_kwargs: dict = dataclasses.field(default_factory=dict)
+    mp_context: str = "forkserver"
 
     def __post_init__(self) -> None:
         if self.num_envs > 1:
@@ -47,41 +54,34 @@ class TrackingEvaluation:
             self.motion_buffer = MotionBuffer(files=self.motions, base_path=self.motion_base_path, keys=["qpos", "qvel", "observation"])
 
     def run(self, agent: Any) -> Dict[str, Any]:
-        metrics = {}
         ids = self.motion_buffer.get_motion_ids()
+        np.random.shuffle(ids)  # shuffle the ids to evenly distribute the motions, as different datasets have different motion length
         num_workers = min(self.num_envs, len(ids))
         motions_per_worker = np.array_split(ids, num_workers)
         f = functools.partial(
             _async_tracking_worker,
-            env_fn=CloudpickleWrapper(lambda: make_humenv(num_envs=1, wrappers=self.wrappers, **self.env_kwargs)),
-            agent=agent,
+            wrappers=self.wrappers,
+            env_kwargs=self.env_kwargs,
             motion_buffer=self.motion_buffer,
         )
         if num_workers == 1:
-            results = f((motions_per_worker[0], 0))
+            metrics = f((motions_per_worker[0], 0, agent))
         else:
-            with ThreadPoolExecutor(max_workers=num_workers) as pool:
-                inputs = [(x, y) for x, y in zip(motions_per_worker, range(len(motions_per_worker)))]
+            prev_omp_num_th = os.environ.get("OMP_NUM_THREADS", None)
+            os.environ["OMP_NUM_THREADS"] = "1"
+            with ProcessPoolExecutor(
+                max_workers=num_workers,
+                mp_context=multiprocessing.get_context(self.mp_context),
+            ) as pool:
+                inputs = [(x, y, agent) for x, y in zip(motions_per_worker, range(len(motions_per_worker)))]
                 list_res = pool.map(f, inputs)
-                results = []
+                metrics = {}
                 for el in list_res:
-                    results.extend(el)
-        # Compute metrics
-        for ep in results:
-            metr = {}
-            next_obs = torch.tensor(ep["observation"][1:], dtype=torch.float32)
-            tracking_target = torch.tensor(ep["tracking_target"], dtype=torch.float32)
-            dist_prox_res = distance_proximity(next_obs=next_obs, tracking_target=tracking_target)
-            metr.update(dist_prox_res)
-            emd_res = emd(next_obs=next_obs, tracking_target=tracking_target)
-            metr.update(emd_res)
-            phc_res = phc_metrics(next_obs=next_obs, tracking_target=tracking_target)
-            metr.update(phc_res)
-            for k, v in metr.items():
-                if isinstance(v, torch.Tensor):
-                    metr[k] = v.tolist()
-            metr["motion_id"] = ep["motion_id"]
-            metrics[ep["motion_file"]] = metr
+                    metrics.update(el)
+            if prev_omp_num_th is None:
+                del os.environ["OMP_NUM_THREADS"]
+            else:
+                os.environ["OMP_NUM_THREADS"] = prev_omp_num_th
         return metrics
 
     def close(self) -> None:
@@ -89,10 +89,10 @@ class TrackingEvaluation:
             self.mp_manager.shutdown()
 
 
-def _async_tracking_worker(inputs, env_fn, agent: Any, motion_buffer: MotionBuffer):
-    motion_ids, pos = inputs
-    env = env_fn()[0]
-    episodes = []
+def _async_tracking_worker(inputs, wrappers, env_kwargs, motion_buffer: MotionBuffer):
+    motion_ids, pos, agent = inputs
+    env = make_humenv(num_envs=1, wrappers=wrappers, **env_kwargs)[0]
+    metrics = {}
     for m_id in tqdm(motion_ids, position=pos, leave=False):
         ep_ = motion_buffer.get(m_id)
         # we ignore the first state since we need to pass the next observation
@@ -110,6 +110,24 @@ def _async_tracking_worker(inputs, env_fn, agent: Any, motion_buffer: MotionBuff
         tmp["tracking_target"] = tracking_target
         tmp["motion_id"] = m_id
         tmp["motion_file"] = motion_buffer.get_name(m_id)
-        episodes.append(tmp)
+        metrics.update(_calc_metrics(tmp))
     env.close()
-    return episodes
+    return metrics
+
+
+def _calc_metrics(ep):
+    metr = {}
+    next_obs = torch.tensor(ep["observation"][1:], dtype=torch.float32)
+    tracking_target = torch.tensor(ep["tracking_target"], dtype=torch.float32)
+    dist_prox_res = distance_proximity(next_obs=next_obs, tracking_target=tracking_target)
+    metr.update(dist_prox_res)
+    emd_res = emd_numpy(next_obs=next_obs, tracking_target=tracking_target)
+    metr.update(emd_res)
+    phc_res = phc_metrics(next_obs=next_obs, tracking_target=tracking_target)
+    metr.update(phc_res)
+    for k, v in metr.items():
+        if isinstance(v, torch.Tensor):
+            metr[k] = v.tolist()
+    metr["motion_id"] = ep["motion_id"]
+    # metr["motion_file"] = ep["motion_file"]
+    return {ep["motion_file"]: metr}
