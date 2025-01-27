@@ -55,7 +55,7 @@ def make_humenv(
 
         return trunk
 
-    manager = None
+    mp_info = None
     kwargs["motion_base_path"] = motion_base_path
     mp_context = kwargs.pop("context", None)
     if num_envs > 1:
@@ -65,6 +65,7 @@ def make_humenv(
             manager = CustomManager()
             manager.start()
             shared_lib = manager.MotionBuffer(files=motions, base_path=motion_base_path)
+            mp_info = {"manager": manager, "motion_buffer": shared_lib}
         env = [create_single_env(motion_buffer=shared_lib, **kwargs) for _ in range(num_envs)]
         if vectorization_mode == "sync":
             env = SyncVectorEnv(env)
@@ -74,7 +75,7 @@ def make_humenv(
         env = create_single_env(motion_buffer=motions, **kwargs)()
     seed = kwargs.get("seed", random.randint(0, 9999))
     env.reset(seed=seed)  # this is used to pass the seed to the environment
-    return env, manager
+    return env, mp_info
 
 
 ##########
@@ -141,4 +142,4 @@ STANDARD_TASKS = (
 
 ALL_TASKS = STANDARD_TASKS + MOVE_AND_RAISE_HANDS_TASKS
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
