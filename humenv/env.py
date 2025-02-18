@@ -64,7 +64,7 @@ class HumEnv(gym.Env):
         self.action_repeat = 15
         module_path = Path(humenv.__file__).resolve().parent
         if Path(self.xml).exists():
-            self.model = mujoco.MjModel.from_xml_path(self.xml_file)
+            self.model = mujoco.MjModel.from_xml_path(self.xml)
         elif (module_path / self.xml).exists():
             self.model = mujoco.MjModel.from_xml_path(str(module_path / self.xml))
         else:
