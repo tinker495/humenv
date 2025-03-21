@@ -30,6 +30,7 @@ CustomManager.register("MotionBuffer", MotionBuffer)
 
 def make_humenv(
     num_envs: int = 1,
+    unbalanced: bool = False,
     vectorization_mode: str = "async",
     motions: str | List[str] | None = None,
     motion_base_path: str | None = None,
@@ -44,6 +45,7 @@ def make_humenv(
             env = gymnasium.make(
                 id="humenv/HumEnv-v0.0.1",
                 motion_buffer=motion_buffer,
+                xml="assets/robot_unbalance.xml" if unbalanced else "assets/robot.xml",
                 **kwargs,
             )
             if wrappers is None:
