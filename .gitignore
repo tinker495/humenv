@@ -1,5 +1,6 @@
 __pycache__
 .venv/
+build/
 .vscode/
 *.mp4
 *.ipynb
