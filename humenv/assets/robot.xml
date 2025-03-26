@@ -29,6 +29,7 @@
   </asset>
   <worldbody>
     <light name="tracking_light" pos="0 0 7" dir="0 0 -1" directional="true" cutoff="100" exponent="1" diffuse="1 1 1" specular="0.1 0.1 0.1" mode="trackcom"/>
+    <camera name="front" pos="0 -3 1.4" xyaxes="1 0 0 0 1 2" mode="trackcom"/>
     <camera name="back" pos="0 3 2.4" xyaxes="-1 0 0 0 -1 2" mode="trackcom"/>
     <camera name="side" pos="-3 0 2.4" xyaxes="0 -1 0 1 0 2" mode="trackcom"/>
     <camera name="front_side" pos="-2.8 -2.8 0.8" xyaxes="0.5 -0.5 0 0.1 0.1 1" mode="trackcom"/>
