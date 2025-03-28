@@ -74,8 +74,14 @@ generate_goal_poses() {
     conda create -y -n temp_humenv python=3.10
     conda activate temp_humenv
 
-    pip3 install "git+https://github.com/facebookresearch/humenv.git@main" imageio
-    python goal_pose_selection.py
+    conda install -c conda-forge osmesa
+
+    #pip3 install "git+https://github.com/facebookresearch/humenv.git@main" imageio
+    pip3 install imageio
+    pip3 install ../.
+
+    export LIBGL_ALWAYS_SOFTWARE=1
+    xvfb-run -a python goal_pose_selection.py
     conda deactivate
     conda env remove -y --name temp_humenv
 }
@@ -91,5 +97,5 @@ check_cmd() {
     return $?
 }
 
-process_data "$@" || exit 1
+#process_data "$@" || exit 1
 generate_goal_poses || exit 1
